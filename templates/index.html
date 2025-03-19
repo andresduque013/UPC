@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Buscador UPC</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+            text-align: center;
+        }
+
+        h1 {
+            color: #2c3e50;
+            font-size: 2.5em;
+            margin-bottom: 20px;
+        }
+
+        #drop-area {
+            border: 2px dashed #3498db;
+            border-radius: 10px;
+            padding: 30px;
+            cursor: pointer;
+            width: 60%;
+            margin: 20px auto;
+            background-color: #fff;
+            transition: background-color 0.3s ease;
+        }
+
+        #drop-area:hover {
+            background-color: #f0f8ff;
+        }
+
+        #file-input {
+            display: none;
+        }
+
+        #file-name, #upc-code {
+            font-size: 1.1em;
+            color: #555;
+            margin: 10px 0;
+        }
+
+        .result-container {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 30px;
+            gap: 20px;
+        }
+
+        .result {
+            width: 48%;
+            border: 1px solid #ddd;
+            padding: 20px;
+            border-radius: 10px;
+            background-color: #fff;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        .result h3 {
+            color: #3498db;
+            margin-top: 0;
+            font-size: 1.5em;
+        }
+
+        .result iframe {
+            width: 100%;
+            height: 600px;
+            border: none;
+            border-radius: 10px;
+        }
+
+        .error {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+
+        .product-details {
+            text-align: left;
+            margin-top: 15px;
+        }
+
+        .product-details p {
+            margin: 5px 0;
+            font-size: 1em;
+            color: #555;
+        }
+
+        .product-details strong {
+            color: #2c3e50;
+        }
+
+        .button-container {
+            margin-top: 20px;
+        }
+
+        .button-container button {
+            padding: 10px 20px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+        }
+
+        .button-container button:hover {
+            background-color: #2980b9;
+        }
+    </style>
+</head>
+<body>
+    <h1>Búsqueda de Productos por Código UPC</h1>
+    <div id="drop-area">Arrastra y suelta una imagen aquí o haz clic para seleccionar</div>
+    <input type="file" id="file-input" style="display: none;" accept="image/*">
+    <p id="file-name"></p>
+    <p id="upc-code"></p>
+    
+    <h3>Resultados de búsqueda</h3>
+    <div class="result-container">
+        <div class="result" id="go-upc-result">
+            <h3>Resultado de Go-UPC</h3>
+        </div>
+        <div class="result" id="upcitemdb-result">
+            <h3>Resultado de UPCItemDB</h3>
+            <div class="product-details" id="upcitemdb-details"></div>
+        </div>
+    </div>
+
+    <!-- Botón para cerrar pestañas manualmente -->
+    <div class="button-container">
+        <button onclick="closeAllTabs()">Cerrar todas las pestañas</button>
+    </div>
+
+    <script>
+        const dropArea = document.getElementById("drop-area");
+        const fileInput = document.getElementById("file-input");
+        const fileNameText = document.getElementById("file-name");
+        const upcCodeText = document.getElementById("upc-code");
+        const goUpcResult = document.getElementById("go-upc-result");
+        const upcItemDbResult = document.getElementById("upcitemdb-result");
+
+        // Variables para almacenar las referencias de las pestañas abiertas
+        let chatGPTWindow = null;
+        let googleWindow = null;
+        let xcircularsWindow = null;
+
+        dropArea.addEventListener("click", () => fileInput.click());
+        
+        fileInput.addEventListener("change", handleFile);
+        dropArea.addEventListener("dragover", (e) => e.preventDefault());
+        dropArea.addEventListener("drop", (e) => {
+            e.preventDefault();
+            fileInput.files = e.dataTransfer.files;
+            handleFile();
+        });
+
+        function handleFile() {
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            // Limpiar resultados anteriores
+            goUpcResult.innerHTML = "<h3>Resultado de Go-UPC</h3>";
+            upcItemDbResult.innerHTML = "<h3>Resultado de UPCItemDB</h3>";
+            upcCodeText.innerText = "";
+            fileNameText.innerText = "";
+
+            // Cerrar todas las pestañas abiertas
+            closeAllTabs();
+
+            fileNameText.innerText = `Archivo seleccionado: ${file.name}`;
+            
+            const formData = new FormData();
+            formData.append("file", file);
+
+            fetch("/upload", { method: "POST", body: formData })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        upcCodeText.innerText = `Error: ${data.error}`;
+                        return;
+                    }
+                    upcCodeText.innerText = `Código UPC: ${data.upc_code}`;
+                    searchUPC(data.upc_code);
+
+                    // Abrir XCirculars en una nueva pestaña y autocompletar el formulario
+                    xcircularsWindow = openXCirculars(data.upc_code, file);
+
+                    // Abrir nuevas pestañas
+                    chatGPTWindow = openChatGPT(data.upc_code);
+                    googleWindow = openGoogleSearch(data.upc_code);
+                })
+                .catch(error => console.error("Error:", error));
+        }
+
+        function closeAllTabs() {
+            let allClosed = true;
+
+            if (chatGPTWindow && !chatGPTWindow.closed) {
+                try {
+                    chatGPTWindow.close();
+                    if (!chatGPTWindow.closed) {
+                        allClosed = false;
+                    }
+                } catch (error) {
+                    console.error("No se pudo cerrar la pestaña de ChatGPT:", error);
+                    allClosed = false;
+                }
+            }
+
+            if (googleWindow && !googleWindow.closed) {
+                try {
+                    googleWindow.close();
+                    if (!googleWindow.closed) {
+                        allClosed = false;
+                    }
+                } catch (error) {
+                    console.error("No se pudo cerrar la pestaña de Google:", error);
+                    allClosed = false;
+                }
+            }
+
+            if (xcircularsWindow && !xcircularsWindow.closed) {
+                try {
+                    xcircularsWindow.close();
+                    if (!xcircularsWindow.closed) {
+                        allClosed = false;
+                    }
+                } catch (error) {
+                    console.error("No se pudo cerrar la pestaña de XCirculars:", error);
+                    allClosed = false;
+                }
+            }
+
+            if (!allClosed) {
+                alert("No se pudieron cerrar todas las pestañas automáticamente. Por favor, ciérralas manualmente.");
+            }
+        }
+
+        function searchUPC(upc) {
+            const sources = [
+                { name: "Go-UPC", url: `https://go-upc.com/search?q=${upc}`, useIframe: true, target: goUpcResult },
+                { name: "UPCItemDB", url: `https://www.upcitemdb.com/upc/${upc}`, useIframe: false, target: upcItemDbResult }
+            ];
+
+            sources.forEach(source => {
+                if (source.useIframe) {
+                    const frame = document.createElement("iframe");
+                    frame.src = source.url;
+                    frame.style.width = "100%";
+                    frame.style.height = "600px";
+                    frame.style.border = "none";
+                    frame.style.borderRadius = "10px";
+                    source.target.appendChild(frame);
+                } else {
+                    takeScreenshot(source.url, upc, source.target);
+                }
+            });
+        }
+
+        function takeScreenshot(url, upc, target) {
+            fetch("/screenshot", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ url, upc_code: upc })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    target.innerHTML = `<p class="error">${data.error}</p>`;
+                } else if (data.screenshot) {
+                    const detailsContainer = target.querySelector(".product-details") || target;
+                    detailsContainer.innerHTML = `
+                        <p><strong>Nombre:</strong> ${data.screenshot.title}</p>
+                        <p><strong>Descripción:</strong> ${data.screenshot.description}</p>
+                        ${data.screenshot.image ? `<img src="${data.screenshot.image}" alt="Imagen del producto">` : '<p>No hay imagen disponible</p>'}
+                    `;
+                }
+            })
+            .catch(error => console.error("Error en screenshot:", error));
+        }
+
+        function openChatGPT(upc) {
+            const prompt = `Clasifica el producto con UPC ${upc} en una de estas categorías: Grocery, Dairy, Frozen, Snack, Beverage, Non-food, Deli, Package Meat, Bakery, Seafood. Responde solo con el nombre de la categoría, siempre en ingles.`;
+            const chatGPTUrl = `https://chat.openai.com/?prompt=${encodeURIComponent(prompt)}`;
+            return window.open(chatGPTUrl, "_blank");
+        }
+
+        function openGoogleSearch(upc) {
+            const googleUrl = `https://www.google.com/search?q=${upc}`;
+            return window.open(googleUrl, "_blank");
+        }
+
+        function openXCirculars(upc, file) {
+            const xcircularsUrl = "https://www.xcirculars.com/addProduct";
+            const xcircularsWindow = window.open(xcircularsUrl, "_blank");
+
+            // Esperar a que la página se cargue
+            xcircularsWindow.onload = function() {
+                // Llenar el campo del UPC
+                const upcInput = xcircularsWindow.document.querySelector('input[name="upc"]');
+                if (upcInput) {
+                    upcInput.value = upc;
+                }
+
+                // Subir la imagen
+                const imageInput = xcircularsWindow.document.querySelector('input[type="file"]');
+                if (imageInput) {
+                    const dataTransfer = new DataTransfer();
+                    dataTransfer.items.add(file);
+                    imageInput.files = dataTransfer.files;
+
+                    // Disparar el evento change para que la página procese la imagen
+                    const event = new Event("change", { bubbles: true });
+                    imageInput.dispatchEvent(event);
+                } else {
+                    console.error("No se encontró el campo de subida de imágenes en XCirculars.");
+                }
+            };
+
+            return xcircularsWindow;
+        }
+    </script>
+</body>
+</html>
